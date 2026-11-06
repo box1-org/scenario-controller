@@ -1,0 +1,147 @@
+# Starfleet Feline Supply scenario catalog (box1-docs#19). Titles and stories carry the whimsy;
+# names, mechanisms, fixture IDs and reasons stay plain. Durations are seconds. A start may only lower the TTL.
+# Mechanisms: SERVICE_API, GUIDED_ERP, VM_LEVEL, PLATFORM. Availability: AVAILABLE or NOT_YET_POSSIBLE.
+scenarios:
+  - name: baseline-order
+    title: Make it so
+    description: Picard orders Spot's bowl from Spacedock; it ships and completes.
+    mechanism: SERVICE_API
+    availability: AVAILABLE
+    prerequisites:
+      - Fixtures seeded.
+      - The fulfillment adapter can reach the ERP.
+    fixtures: [cust_picard, site_spacedock, CAT-SPOT-BOWL]
+    defaultDurationSeconds: 600
+    maxDurationSeconds: 1800
+    expectedObservation: The order reaches FULFILLMENT_REQUESTED, then SHIPPED (and COMPLETED where the completion policy allows). A replay of the same idempotency key returns the same order.
+    resetAction: Restock fixture stock below its opening quantity.
+    operatorSteps:
+      - In the ERP console, ship the request (find it with "/" and its ID, then "s", "Y"), or switch the ERP to AUTO ("m", "Y").
+
+  - name: inventory-contention
+    title: The Trouble with Tribbles
+    description: Kirk and Sisko order the last CAT-TRIBBLE-TOY at DS9 at once; exactly one reservation wins.
+    mechanism: SERVICE_API
+    availability: AVAILABLE
+    prerequisites:
+      - Fixtures seeded.
+      - At least one CAT-TRIBBLE-TOY available at site_ds9 (restored automatically when it is zero).
+    fixtures: [cust_kirk, cust_sisko, site_ds9, CAT-TRIBBLE-TOY]
+    defaultDurationSeconds: 180
+    maxDurationSeconds: 600
+    expectedObservation: Both order everything available (normally the one tribble). One order is reserved and the other is REJECTED with INSUFFICIENT_STOCK; site_ds9 CAT-TRIBBLE-TOY has 0 available.
+    resetAction: Restock CAT-TRIBBLE-TOY at site_ds9 to one available.
+    operatorSteps: []
+
+  - name: erp-manual-hold
+    title: Hold that order, Number One
+    description: The request is held in the ERP console, then released.
+    mechanism: GUIDED_ERP
+    availability: AVAILABLE
+    prerequisites:
+      - Fixtures seeded.
+      - The fulfillment adapter can reach the ERP.
+    fixtures: [cust_janeway, site_utopia_planitia, CAT-COMBADGE-COLLAR]
+    defaultDurationSeconds: 900
+    maxDurationSeconds: 1800
+    expectedObservation: The adapter reports outcome HELD while the order stays FULFILLMENT_REQUESTED and the fulfillment_held gauge rises over its baseline; after the release the outcome is PENDING or SHIPPED. Nothing is lost.
+    resetAction: Restock fixture stock; if the request is still held, release it in the ERP console ("l").
+    operatorSteps:
+      - In the ERP console, find the request ("/" and its ID, Enter), hold it ("h", a reason, Enter).
+      - Release the hold ("l").
+
+  - name: erp-delayed-processing
+    title: Impulse power only
+    description: ERP AUTO processing is delayed; the order waits visibly.
+    mechanism: GUIDED_ERP
+    availability: AVAILABLE
+    prerequisites:
+      - Fixtures seeded.
+      - The fulfillment adapter can reach the ERP.
+      - ERP demo faults enabled ([demo] faults = true).
+    fixtures: [cust_data, site_spacedock, CAT-PHASER-LASER]
+    defaultDurationSeconds: 900
+    maxDurationSeconds: 1800
+    expectedObservation: At least 60 seconds pass between the ERP's acknowledgement and its shipment (adapter times), then the order ships exactly once.
+    resetAction: Restock fixture stock; set the ERP delay back to 0 ("X", "3", 0, Enter).
+    operatorSteps:
+      - In the ERP console, switch to AUTO if needed ("m", "Y"), then set a delay of at least 90 seconds ("X", "3", seconds, Enter).
+      - After the order ships, set the delay back to 0 ("X", "3", 0, Enter).
+
+  - name: erp-crash-after-commit
+    title: Warp core breach (one-shot, contained)
+    description: The ERP crashes once after committing a shipment and recovers it.
+    mechanism: GUIDED_ERP
+    availability: AVAILABLE
+    prerequisites:
+      - Fixtures seeded.
+      - The fulfillment adapter can reach the ERP.
+      - ERP demo faults enabled ([demo] faults = true) and the ERP in AUTO.
+    fixtures: [cust_sisko, site_ds9, CAT-DILITHIUM-NIP]
+    defaultDurationSeconds: 900
+    maxDurationSeconds: 1800
+    expectedObservation: The operator confirms the crash was armed and that the worker exited and restarted; the order ships exactly once (one shipment event, stable shipment ID). Without both confirmations the run is NOT_VERIFIED.
+    resetAction: Restock fixture stock. The crash fault disarms itself when it fires; if it did not fire, disarm it ("X", "2").
+    operatorSteps:
+      - In the ERP console, arm the one-shot crash ("X", "2", "Y", Enter) with the ERP in AUTO, then confirm step crash-armed.
+      - After the order ships, check the worker exited and restarted (status line or journal), then confirm step crash-observed.
+
+  - name: erp-unavailable
+    title: The ERP has cloaked
+    description: The ERP VM is unavailable; requests are accepted and delivered later.
+    mechanism: VM_LEVEL
+    availability: NOT_YET_POSSIBLE
+    notPossibleReason: Stopping the ERP VM needs Kubernetes RBAC that is not approved, and Argo self-heal restores the VM's run strategy.
+    fixtures: []
+    defaultDurationSeconds: 300
+    maxDurationSeconds: 600
+    expectedObservation: Not applicable.
+    resetAction: Not applicable.
+
+  - name: broker-outage
+    title: Subspace interference
+    description: Kafka unavailable; orders wait and recover without loss.
+    mechanism: PLATFORM
+    availability: NOT_YET_POSSIBLE
+    notPossibleReason: No approved, bounded mechanism makes the shared Kafka broker unavailable, and the controller has no RBAC for it.
+    fixtures: []
+    defaultDurationSeconds: 300
+    maxDurationSeconds: 600
+    expectedObservation: Not applicable.
+    resetAction: Not applicable.
+
+  - name: poison-event
+    title: Q was here
+    description: A malformed event reaches a consumer and lands in its dead-letter topic.
+    mechanism: PLATFORM
+    availability: NOT_YET_POSSIBLE
+    notPossibleReason: No service publishes caller-supplied events, and the controller has no scoped Kafka producer identity (box1-docs#71).
+    fixtures: []
+    defaultDurationSeconds: 300
+    maxDurationSeconds: 600
+    expectedObservation: Not applicable.
+    resetAction: Not applicable.
+
+  - name: bad-artifact-gate
+    title: Unsigned shuttlecraft denied docking
+    description: An untrusted artifact is refused by the release gate.
+    mechanism: PLATFORM
+    availability: NOT_YET_POSSIBLE
+    notPossibleReason: No release gate or admission control verifies artifact signatures on this platform.
+    fixtures: []
+    defaultDurationSeconds: 300
+    maxDurationSeconds: 600
+    expectedObservation: Not applicable.
+    resetAction: Not applicable.
+
+  - name: red-alert
+    title: Red alert
+    description: Telemetry load and chaos at Spacedock and DS9 through the asset service's control API.
+    mechanism: SERVICE_API
+    availability: NOT_YET_POSSIBLE
+    notPossibleReason: The asset service accepts control calls only from its own client (azp asset-service), and chaos is disabled on this cluster.
+    fixtures: [asset_replicator_spacedock, asset_litterbox_transporter_ds9]
+    defaultDurationSeconds: 300
+    maxDurationSeconds: 600
+    expectedObservation: Not applicable.
+    resetAction: Not applicable.
