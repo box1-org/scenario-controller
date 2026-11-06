@@ -1,0 +1,6 @@
+site_name: scenario-controller
+site_description: "A little whimsy for demos"
+nav:
+  - Home: index.md
+plugins:
+  - techdocs-core
