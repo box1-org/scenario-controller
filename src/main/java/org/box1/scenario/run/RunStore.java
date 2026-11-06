@@ -16,12 +16,13 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.transaction.Transactional;
 
 /** Run and audit SQL. Each statement commits on its own; the unique open-run index serialises starts. */
 @ApplicationScoped
 public class RunStore {
     private static final ObjectMapper JSON = new ObjectMapper();
-    private static final String RUN_COLUMNS = "run_id, scenario, title, mode, status, detail, operator_step, actor, environment,"
+    private static final String RUN_COLUMNS = "run_id, scenario, title, mode, status, detail, operator_step, operator_step_id, actor, environment,"
             + " namespace, ttl_seconds, correlation_id, impact::text, started_at, expires_at, ended_at, reset_result,"
             + " reset_detail, reset_at";
 
@@ -41,17 +42,48 @@ public class RunStore {
     }
 
     public record Run(String runId, String scenario, String title, String mode, RunState status, String detail,
-            String operatorStep, String actor, String environment, String namespace, int ttlSeconds, String correlationId,
+            String operatorStep, String operatorStepId, String actor, String environment, String namespace, int ttlSeconds, String correlationId,
             JsonNode impact, Instant startedAt, Instant expiresAt, Instant endedAt, String resetResult, String resetDetail,
             Instant resetAt) {}
 
     public record Audit(long seq, String runId, String scenario, String action, String outcome, String actor,
             String environment, String namespace, String detail, Instant occurredAt) {}
 
-    /** Insert a run. False when another run is still open. */
-    public boolean insert(Run run) {
+    /**
+     * Insert a run with its START audit row and fixture impact, in one transaction. False when another run is still
+     * open (the partial unique index), and then nothing is written.
+     */
+    @Transactional
+    public boolean start(Run run, String detail, List<String> fixtures) {
+        if (!insert(run)) {
+            return false;
+        }
+        audit(run.runId(), run.scenario(), "START", "ACCEPTED", run.actor(), run.environment(), run.namespace(), detail,
+                run.startedAt());
+        impact(run.runId(), "fixtures", fixtures);
+        return true;
+    }
+
+    /** End an open run and write its RESULT audit row, in one transaction. False when it had already ended. */
+    @Transactional
+    public boolean end(Run run, RunState status, String detail, String actor, Instant now) {
+        if (!end(run.runId(), status, detail, now)) {
+            return false;
+        }
+        audit(run.runId(), run.scenario(), "RESULT", status.name(), actor, run.environment(), run.namespace(), detail, now);
+        return true;
+    }
+
+    /** Ended runs whose reset never recorded a result (the process died between ending and resetting). */
+    public List<Run> pendingResets() {
+        return runs("SELECT " + RUN_COLUMNS + " FROM scenario_run WHERE ended_at IS NOT NULL AND reset_result IS NULL"
+                + " ORDER BY started_at");
+    }
+
+    /** Insert a run. False when another run is still open; ON CONFLICT keeps the transaction usable. */
+    boolean insert(Run run) {
         String sql = "INSERT INTO scenario_run (run_id, scenario, title, mode, status, actor, environment, namespace, ttl_seconds,"
-                + " correlation_id, started_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                + " correlation_id, started_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING";
         try (Connection c = dataSource.getConnection(); PreparedStatement s = c.prepareStatement(sql)) {
             s.setString(1, run.runId());
             s.setString(2, run.scenario());
@@ -65,25 +97,21 @@ public class RunStore {
             s.setString(10, run.correlationId());
             s.setTimestamp(11, Timestamp.from(run.startedAt()));
             s.setTimestamp(12, Timestamp.from(run.expiresAt()));
-            s.executeUpdate();
-            return true;
+            return s.executeUpdate() == 1;
         } catch (SQLException error) {
-            if ("23505".equals(error.getSQLState())) {
-                return false;
-            }
             throw new StoreException(error);
         }
     }
 
     /** Change an open run's status and operator step. Ignored once the run has ended. */
-    public void progress(String runId, RunState status, String operatorStep) {
-        update("UPDATE scenario_run SET status = ?, operator_step = ? WHERE run_id = ? AND ended_at IS NULL",
-                status.name(), operatorStep, runId);
+    public void progress(String runId, RunState status, String operatorStep, String operatorStepId) {
+        update("UPDATE scenario_run SET status = ?, operator_step = ?, operator_step_id = ? WHERE run_id = ? AND ended_at IS NULL",
+                status.name(), operatorStep, operatorStepId, runId);
     }
 
     /** End an open run. False when it had already ended (the first ending wins). */
-    public boolean end(String runId, RunState status, String detail, Instant now) {
-        return update("UPDATE scenario_run SET status = ?, detail = ?, operator_step = NULL, ended_at = ?"
+    boolean end(String runId, RunState status, String detail, Instant now) {
+        return update("UPDATE scenario_run SET status = ?, detail = ?, operator_step = NULL, operator_step_id = NULL, ended_at = ?"
                 + " WHERE run_id = ? AND ended_at IS NULL", status.name(), detail, Timestamp.from(now), runId) == 1;
     }
 
@@ -146,11 +174,14 @@ public class RunStore {
                 : audits(columns + " WHERE seq < ? ORDER BY seq DESC LIMIT ?", before, limit);
     }
 
-    /** Retention: delete audit rows, then ended runs, older than the cutoff. Returns the audit rows deleted. */
-    public int purge(Instant cutoff) {
-        int audits = update("DELETE FROM scenario_audit WHERE occurred_at < ?", Timestamp.from(cutoff));
-        update("DELETE FROM scenario_run r WHERE ended_at < ? AND NOT EXISTS"
-                + " (SELECT 1 FROM scenario_audit a WHERE a.run_id = r.run_id)", Timestamp.from(cutoff));
+    /**
+     * Retention: delete audit rows, then ended runs, older than 90 days by database time, the same rule the audit
+     * trigger enforces. Returns the audit rows deleted.
+     */
+    public int purge() {
+        int audits = update("DELETE FROM scenario_audit WHERE occurred_at < now() - interval '90 days'");
+        update("DELETE FROM scenario_run r WHERE ended_at < now() - interval '90 days' AND NOT EXISTS"
+                + " (SELECT 1 FROM scenario_audit a WHERE a.run_id = r.run_id)");
         return audits;
     }
 
@@ -171,8 +202,8 @@ public class RunStore {
                 while (r.next()) {
                     runs.add(new Run(r.getString(1), r.getString(2), r.getString(3), r.getString(4),
                             RunState.valueOf(r.getString(5)), r.getString(6), r.getString(7), r.getString(8), r.getString(9),
-                            r.getString(10), r.getInt(11), r.getString(12), JSON.readTree(r.getString(13)), instant(r, 14),
-                            instant(r, 15), instant(r, 16), r.getString(17), r.getString(18), instant(r, 19)));
+                            r.getString(10), r.getString(11), r.getInt(12), r.getString(13), JSON.readTree(r.getString(14)),
+                            instant(r, 15), instant(r, 16), instant(r, 17), r.getString(18), r.getString(19), instant(r, 20)));
                 }
             }
             return runs;

@@ -25,11 +25,11 @@ scenarios:
     availability: AVAILABLE
     prerequisites:
       - Fixtures seeded.
-      - Exactly one CAT-TRIBBLE-TOY available at site_ds9 (restored automatically when it is zero).
+      - At least one CAT-TRIBBLE-TOY available at site_ds9 (restored automatically when it is zero).
     fixtures: [cust_kirk, cust_sisko, site_ds9, CAT-TRIBBLE-TOY]
     defaultDurationSeconds: 180
     maxDurationSeconds: 600
-    expectedObservation: One order is reserved and the other is REJECTED with INSUFFICIENT_STOCK; site_ds9 CAT-TRIBBLE-TOY has 0 available.
+    expectedObservation: Both order everything available (normally the one tribble). One order is reserved and the other is REJECTED with INSUFFICIENT_STOCK; site_ds9 CAT-TRIBBLE-TOY has 0 available.
     resetAction: Restock CAT-TRIBBLE-TOY at site_ds9 to one available.
     operatorSteps: []
 
@@ -44,7 +44,7 @@ scenarios:
     fixtures: [cust_janeway, site_utopia_planitia, CAT-COMBADGE-COLLAR]
     defaultDurationSeconds: 900
     maxDurationSeconds: 1800
-    expectedObservation: The adapter reports outcome HELD while the order stays FULFILLMENT_REQUESTED, then the hold is released and the outcome leaves HELD. Nothing is lost.
+    expectedObservation: The adapter reports outcome HELD while the order stays FULFILLMENT_REQUESTED and the fulfillment_held gauge rises over its baseline; after the release the outcome is PENDING or SHIPPED. Nothing is lost.
     resetAction: Restock fixture stock; if the request is still held, release it in the ERP console ("l").
     operatorSteps:
       - In the ERP console, find the request ("/" and its ID, Enter), hold it ("h", a reason, Enter).
@@ -62,7 +62,7 @@ scenarios:
     fixtures: [cust_data, site_spacedock, CAT-PHASER-LASER]
     defaultDurationSeconds: 900
     maxDurationSeconds: 1800
-    expectedObservation: The ERP acknowledges the request, the order waits in FULFILLMENT_REQUESTED for at least 60 seconds, then ships without loss.
+    expectedObservation: At least 60 seconds pass between the ERP's acknowledgement and its shipment (adapter times), then the order ships exactly once.
     resetAction: Restock fixture stock; set the ERP delay back to 0 ("X", "3", 0, Enter).
     operatorSteps:
       - In the ERP console, switch to AUTO if needed ("m", "Y"), then set a delay of at least 90 seconds ("X", "3", seconds, Enter).
@@ -80,10 +80,11 @@ scenarios:
     fixtures: [cust_sisko, site_ds9, CAT-DILITHIUM-NIP]
     defaultDurationSeconds: 900
     maxDurationSeconds: 1800
-    expectedObservation: The order ships exactly once (one SHIPPED transition). The crash itself is visible only in the ERP; the controller verifies the recovered outcome.
+    expectedObservation: The operator confirms the crash was armed and that the worker exited and restarted; the order ships exactly once (one shipment event, stable shipment ID). Without both confirmations the run is NOT_VERIFIED.
     resetAction: Restock fixture stock. The crash fault disarms itself when it fires; if it did not fire, disarm it ("X", "2").
     operatorSteps:
-      - In the ERP console, arm the one-shot crash ("X", "2", "Y", Enter) with the ERP in AUTO.
+      - In the ERP console, arm the one-shot crash ("X", "2", "Y", Enter) with the ERP in AUTO, then confirm step crash-armed.
+      - After the order ships, check the worker exited and restarted (status line or journal), then confirm step crash-observed.
 
   - name: erp-unavailable
     title: The ERP has cloaked

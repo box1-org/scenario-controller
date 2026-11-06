@@ -33,12 +33,12 @@ public final class Views {
     }
 
     public record RunView(String scenarioRunId, String scenario, String title, String mode, String status, String detail,
-            String operatorStep, String actor, String environment, String namespace, int ttlSeconds, String correlationId,
+            String operatorStep, String operatorStepId, String actor, String environment, String namespace, int ttlSeconds, String correlationId,
             JsonNode impact, Instant startedAt, String startedStardate, Instant expiresAt, Instant endedAt, String resetResult,
             String resetDetail, Instant resetAt, List<AuditView> audit) {
         static RunView of(RunStore.Run r, List<RunStore.Audit> audit) {
             return new RunView(r.runId(), r.scenario(), r.title(), r.mode(), r.status().name(), r.detail(), r.operatorStep(),
-                    r.actor(), r.environment(), r.namespace(), r.ttlSeconds(), r.correlationId(), r.impact(), r.startedAt(),
+                    r.operatorStepId(), r.actor(), r.environment(), r.namespace(), r.ttlSeconds(), r.correlationId(), r.impact(), r.startedAt(),
                     Stardate.of(r.startedAt()), r.expiresAt(), r.endedAt(), r.resetResult(), r.resetDetail(), r.resetAt(),
                     audit == null ? null : audit.stream().map(AuditView::of).toList());
         }

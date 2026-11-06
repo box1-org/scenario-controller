@@ -134,7 +134,7 @@ class ScenarioRunsTest {
         JsonPath run = ended(runId);
         assertEquals("VERIFIED", run.getString("status"), run.prettify());
         assertTrue(run.getString("detail").contains("stayed FULFILLMENT_REQUESTED while held"));
-        assertTrue(run.getString("detail").contains("held signal: fulfillment_held >= 1"), run.getString("detail"));
+        assertTrue(run.getString("detail").contains("held signal: fulfillment_held rose from 0.0"), run.getString("detail"));
         assertEquals("RESET_OK", run.getString("resetResult"));
         complete(run);
     }
@@ -157,13 +157,74 @@ class ScenarioRunsTest {
         complete(run);
     }
 
+    private static void confirm(String runId, String step) {
+        until(runId, Duration.ofSeconds(10), r -> step.equals(r.getString("operatorStepId")));
+        as().body("{\"step\":\"" + step + "\"}").when().post("/internal/v1/runs/" + runId + "/confirm").then().statusCode(200);
+    }
+
     @Test
-    void warpCoreBreachVerifiesOneShipment() {
+    void warpCoreBreachNeedsBothConfirmationsAndOneShipment() {
         fake.auto();
-        JsonPath run = ended(start("erp-crash-after-commit", 20));
+        String runId = start("erp-crash-after-commit", 20);
+        as().body("{\"step\":\"crash-observed\"}").when().post("/internal/v1/runs/" + runId + "/confirm").then().statusCode(409);
+        confirm(runId, "crash-armed");
+        confirm(runId, "crash-observed");
+        JsonPath run = ended(runId);
         assertEquals("VERIFIED", run.getString("status"), run.prettify());
         assertTrue(run.getString("detail").contains("shipped exactly once"));
+        assertTrue(run.getList("audit.action").contains("CONFIRM"));
+        assertEquals(Api.OPERATOR, run.getList("audit.findAll { it.action == 'CONFIRM' }.actor").get(0));
         complete(run);
+    }
+
+    @Test
+    void warpCoreBreachWithoutTheArmingConfirmationIsNotVerifiedAndPlacesNoOrder() {
+        fake.auto();
+        JsonPath run = ended(start("erp-crash-after-commit", 3));
+        assertEquals("NOT_VERIFIED", run.getString("status"));
+        assertEquals("Operator step not confirmed before the TTL: crash-armed", run.getString("detail"));
+        assertEquals(0, fake.orders.size());
+    }
+
+    @Test
+    void aDuplicateShipmentFailsMakeItSo() {
+        fake.auto();
+        fake.duplicateShipment = true;
+        JsonPath run = ended(start("baseline-order", 30));
+        assertEquals("FAILED", run.getString("status"), run.prettify());
+        assertTrue(run.getString("detail").contains("received 2 shipment confirmations"), run.getString("detail"));
+    }
+
+    @Test
+    void aRejectedRequestIsNotARelease() {
+        String runId = start("erp-manual-hold", null);
+        JsonPath waiting = until(runId, Duration.ofSeconds(10), r -> r.getString("operatorStep") != null
+                && r.getString("operatorStep").contains("hold it"));
+        String ful = waiting.getList("impact.fulfillmentRequests").get(0).toString();
+        fake.hold(ful);
+        until(runId, Duration.ofSeconds(10), r -> r.getString("operatorStep") != null && r.getString("operatorStep").contains("release"));
+        fake.release(ful);
+        fake.reject(ful);
+        JsonPath run = ended(runId);
+        assertEquals("FAILED", run.getString("status"), run.prettify());
+        assertTrue(run.getString("detail").contains("ended REJECTED, not released"), run.getString("detail"));
+    }
+
+    @Test
+    void contentionStaysExactWhenMoreThanOneIsAvailable() {
+        fake.stock.get("site_ds9|CAT-TRIBBLE-TOY")[0] = 2;
+        JsonPath run = ended(start("inventory-contention", null));
+        assertEquals("VERIFIED", run.getString("status"), run.prettify());
+        assertTrue(run.getString("detail").contains("for the last 2 tribbles"), run.getString("detail"));
+        assertEquals(1, fake.orders.values().stream().filter(o -> "FULFILLMENT_REQUESTED".equals(o.state) && o.quantity == 2).count());
+    }
+
+    @Test
+    void aResetWithoutARunIsRefusedWhileAnotherRunIsOpen() {
+        String runId = start("baseline-order", null);
+        as().when().post("/internal/v1/scenarios/inventory-contention/reset").then().statusCode(409)
+                .body("detail", is("Another scenario run is active: " + runId));
+        as().when().post("/internal/v1/scenarios/baseline-order/stop").then().statusCode(200);
     }
 
     @Test

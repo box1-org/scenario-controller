@@ -12,7 +12,11 @@ import io.smallrye.config.WithDefault;
 public interface ScenarioSettings {
     boolean controlEnabled();
 
-    Optional<String> namespace();
+    /** Test runs only: stands in for POD_NAMESPACE, which is otherwise read from the environment alone. */
+    Optional<String> testNamespace();
+
+    /** Hosts the upstream and token URLs may point at. Anything else closes the gate. */
+    Optional<List<String>> upstreamHostAllowlist();
 
     Optional<List<String>> namespaceAllowlist();
 
@@ -31,11 +35,13 @@ public interface ScenarioSettings {
     /** Interval of the expiry sweep, read by the scheduler. */
     String expiryInterval();
 
-    Duration retention();
-
     /** How long an acknowledged request must wait before shipping for a delay to count as visible. */
     @WithDefault("PT60S")
     Duration minimumVisibleDelay();
+
+    /** How long to watch after a first shipment for a duplicate. */
+    @WithDefault("PT10S")
+    Duration shipmentSettle();
 
     List<String> allowedAzp();
 

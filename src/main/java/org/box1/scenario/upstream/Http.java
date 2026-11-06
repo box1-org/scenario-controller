@@ -25,6 +25,8 @@ public class Http {
     /** Characters allowed in a path segment: contract IDs and SKUs without separators. */
     private static final Pattern SEGMENT = Pattern.compile("^[A-Za-z0-9_-]{1,128}$");
     static final ObjectMapper JSON = new ObjectMapper();
+    /** Upstream bodies larger than this are refused, not buffered. */
+    static final int MAX_BODY = 1 << 20;
 
     private final HttpClient client;
     private final Duration timeout;
@@ -64,7 +66,7 @@ public class Http {
             } else {
                 request.method(method, HttpRequest.BodyPublishers.noBody());
             }
-            HttpResponse<String> response = client.send(request.build(), HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = client.send(request.build(), Http::bounded);
             return new Reply(response.statusCode(), parse(response.body()));
         } catch (IOException error) {
             throw new UpstreamException("Call to " + host(base) + " failed", error);
@@ -78,7 +80,7 @@ public class Http {
     String text(String base, String path) {
         try {
             HttpRequest request = HttpRequest.newBuilder(URI.create(base + path)).timeout(timeout).GET().build();
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = client.send(request, Http::bounded);
             if (response.statusCode() != 200) {
                 throw new UpstreamException(host(base) + " metrics answered " + response.statusCode(), response.statusCode());
             }
@@ -89,6 +91,16 @@ public class Http {
             Thread.currentThread().interrupt();
             throw new UpstreamException("Call to " + host(base) + " was interrupted", error);
         }
+    }
+
+    /** A body handler that refuses anything larger than MAX_BODY. */
+    private static HttpResponse.BodySubscriber<String> bounded(HttpResponse.ResponseInfo info) {
+        long length = info.headers().firstValueAsLong("Content-Length").orElse(-1);
+        if (length > MAX_BODY) {
+            return HttpResponse.BodySubscribers.replacing("");
+        }
+        return HttpResponse.BodySubscribers.mapping(HttpResponse.BodySubscribers.ofByteArray(), bytes ->
+                bytes.length > MAX_BODY ? "" : new String(bytes, java.nio.charset.StandardCharsets.UTF_8));
     }
 
     private static JsonNode parse(String text) {

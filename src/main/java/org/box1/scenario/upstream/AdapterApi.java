@@ -22,7 +22,7 @@ public class AdapterApi {
     }
 
     public record Fulfillment(String fulfillmentRequestId, String orderId, String dispatch, String erpAcknowledgement,
-            String outcome, String shipmentId) {}
+            String outcome, String shipmentId, java.time.Instant acknowledgedAt, java.time.Instant statusAt) {}
 
     /** Empty when the adapter has no such request yet. */
     public Optional<Fulfillment> fulfillment(String fulfillmentRequestId, String correlationId) {
@@ -36,7 +36,16 @@ public class AdapterApi {
         }
         var b = reply.body();
         return Optional.of(new Fulfillment(fulfillmentRequestId, OrderApi.text(b, "orderId"), OrderApi.text(b, "dispatch"),
-                OrderApi.text(b, "erpAcknowledgement"), OrderApi.text(b, "outcome"), OrderApi.text(b, "shipmentId")));
+                OrderApi.text(b, "erpAcknowledgement"), OrderApi.text(b, "outcome"), OrderApi.text(b, "shipmentId"),
+                instant(OrderApi.text(b, "acknowledgedAt")), instant(OrderApi.text(b, "statusAt"))));
+    }
+
+    private static java.time.Instant instant(String value) {
+        try {
+            return value == null ? null : java.time.Instant.parse(value);
+        } catch (java.time.format.DateTimeParseException error) {
+            return null;
+        }
     }
 
     /** The adapter's fulfillment_held gauge, the metric signal for held work (no alert rule exists on this platform). */

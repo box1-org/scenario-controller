@@ -44,7 +44,6 @@ public class ErpDelayedProcessing implements ScenarioExecutor {
         if (Steps.acknowledged(c, orderId, ful).isEmpty()) {
             return Result.notVerified("The ERP did not acknowledge " + ful + " before the TTL").withGuidedReset(UNDO);
         }
-        Instant acknowledged = c.now();
         c.note("ACKNOWLEDGED", ful);
         var shipped = Steps.reaches(c, orderId, Steps.SHIPPED);
         c.resume();
@@ -52,16 +51,25 @@ public class ErpDelayedProcessing implements ScenarioExecutor {
             return Result.notVerified("Order " + orderId + " did not ship before the TTL; last state " + Steps.last(c, orderId)
                     + ". Is the ERP in AUTO?").withGuidedReset(UNDO);
         }
-        Duration waited = Duration.between(acknowledged, c.now());
+        // Measured at the ERP boundary (the adapter's acknowledgement and shipment times), so outbox or Kafka lag
+        // downstream of the ERP cannot count as an ERP delay.
+        var status = c.read(() -> c.adapter.fulfillment(ful, c.correlationId()));
+        Instant acknowledged = status.map(f -> f.acknowledgedAt()).orElse(null);
+        Instant shippedAt = status.filter(f -> "SHIPPED".equals(f.outcome())).map(f -> f.statusAt()).orElse(null);
+        if (acknowledged == null || shippedAt == null) {
+            return Result.notVerified("The adapter does not report acknowledgement and shipment times for " + ful)
+                    .withGuidedReset(UNDO);
+        }
+        Duration waited = Duration.between(acknowledged, shippedAt);
         if (waited.compareTo(minimumWait) < 0) {
             return Result.notVerified("Order " + orderId + " shipped " + waited.toSeconds()
-                    + " s after acknowledgement; no visible delay").withGuidedReset(UNDO);
+                    + " s after ERP acknowledgement; no visible delay").withGuidedReset(UNDO);
         }
-        long shipments = c.times(c.orders.transitions(orderId, c.correlationId()), "SHIPPED");
-        if (shipments != 1) {
-            return Result.failed("Order " + orderId + " has " + shipments + " SHIPPED transitions").withGuidedReset(UNDO);
+        var problem = Steps.notShippedOnce(c, orderId, ful);
+        if (problem.isPresent()) {
+            return Result.failed(problem.get()).withGuidedReset(UNDO);
         }
-        return Result.verified("Order " + orderId + " waited at least " + waited.toSeconds()
-                + " s in FULFILLMENT_REQUESTED after ERP acknowledgement, then shipped once").withGuidedReset(UNDO);
+        return Result.verified("Order " + orderId + " waited " + waited.toSeconds()
+                + " s between ERP acknowledgement and shipment (adapter times), then shipped once").withGuidedReset(UNDO);
     }
 }

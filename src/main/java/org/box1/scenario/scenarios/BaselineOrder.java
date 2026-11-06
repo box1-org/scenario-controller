@@ -49,9 +49,9 @@ public class BaselineOrder implements ScenarioExecutor {
         if (Steps.DEAD_END.contains(shipped.get().state())) {
             return Result.failed("Order " + orderId + " ended " + shipped.get().state() + " " + shipped.get().statusReason());
         }
-        long shipments = c.times(c.orders.transitions(orderId, c.correlationId()), "SHIPPED");
-        if (shipments != 1) {
-            return Result.failed("Order " + orderId + " has " + shipments + " SHIPPED transitions");
+        var problem = Steps.notShippedOnce(c, orderId, fulfillmentId);
+        if (problem.isPresent()) {
+            return Result.failed(problem.get());
         }
         return Result.verified("Order " + orderId + " reached " + shipped.get().state() + "; replay returned the same order");
     }

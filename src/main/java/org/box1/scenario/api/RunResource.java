@@ -28,6 +28,7 @@ import org.eclipse.microprofile.openapi.annotations.security.SecurityRequirement
 @SecurityRequirement(name = "bearer")
 public class RunResource {
     private static final Pattern RUN_ID = Pattern.compile("^scn_[0-9a-f]{20}$");
+    private static final Pattern STEP = Pattern.compile("^[a-z][a-z0-9-]{1,40}$");
 
     private final RunStore store;
     private final Engine engine;
@@ -106,8 +107,31 @@ public class RunResource {
     @APIResponse(responseCode = "403", description = "Token lacks the role, or the namespace is not allowed", content = @Content(mediaType = Problem.MEDIA_TYPE, schema = @Schema(implementation = Problem.class)))
     @APIResponse(responseCode = "502", description = "Inventory refused or is unavailable", content = @Content(mediaType = Problem.MEDIA_TYPE, schema = @Schema(implementation = Problem.class)))
     public FixtureService.SeedResult seed() {
-        String subject = token.getName();
-        return engine.seed(subject == null ? token.getSubject() : subject);
+        return engine.seed(Actors.of(token));
+    }
+
+    public record Confirm(String step) {}
+
+    @POST
+    @Path("/runs/{scenarioRunId}/confirm")
+    @jakarta.ws.rs.Consumes(MediaType.APPLICATION_JSON)
+    @RolesAllowed(ClientRoleAugmentor.OPERATOR)
+    @Operation(operationId = "confirmStep", summary = "Confirm an operator step the controller cannot observe. Audited as the operator's attestation.")
+    @APIResponse(responseCode = "200", description = "Confirmation recorded", content = @Content(mediaType = MediaType.APPLICATION_JSON,
+            schema = @Schema(implementation = Views.RunView.class)))
+    @APIResponse(responseCode = "400", description = "Invalid request", content = @Content(mediaType = Problem.MEDIA_TYPE, schema = @Schema(implementation = Problem.class)))
+    @APIResponse(responseCode = "401", description = "No valid token", content = @Content(mediaType = Problem.MEDIA_TYPE, schema = @Schema(implementation = Problem.class)))
+    @APIResponse(responseCode = "403", description = "Token lacks the role, or the namespace is not allowed", content = @Content(mediaType = Problem.MEDIA_TYPE, schema = @Schema(implementation = Problem.class)))
+    @APIResponse(responseCode = "404", description = "No such run", content = @Content(mediaType = Problem.MEDIA_TYPE, schema = @Schema(implementation = Problem.class)))
+    @APIResponse(responseCode = "409", description = "The run is not active or not waiting for that step", content = @Content(mediaType = Problem.MEDIA_TYPE, schema = @Schema(implementation = Problem.class)))
+    public Views.RunView confirm(@PathParam("scenarioRunId") String runId, Confirm body) {
+        if (runId == null || !RUN_ID.matcher(runId).matches()) {
+            throw new RequestProblem(404, "Not Found", "No such run");
+        }
+        if (body == null || body.step() == null || !STEP.matcher(body.step()).matches()) {
+            throw new RequestProblem(400, "Bad Request", "step is required");
+        }
+        return Views.RunView.of(engine.confirm(runId, body.step(), Actors.of(token)), null);
     }
 
     private static int bounded(Integer limit) {

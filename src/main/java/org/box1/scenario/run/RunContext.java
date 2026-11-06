@@ -33,9 +33,11 @@ public final class RunContext {
     public interface Recorder {
         void note(String runId, String action, String outcome, String detail);
 
-        void progress(String runId, RunState state, String operatorStep);
+        void progress(String runId, RunState state, String operatorStep, String operatorStepId);
 
         void impact(String runId, String field, Object value);
+
+        boolean confirmed(String runId, String step);
     }
 
     /** The run was stopped while waiting. */
@@ -47,8 +49,11 @@ public final class RunContext {
         }
     }
 
-    public RunContext(RunStore.Run run, Recorder recorder, Clock clock, Duration poll, AtomicBoolean stop, OrderApi orders,
-            InventoryApi inventory, AdapterApi adapter, FixtureService fixtures) {
+    private final Duration settle;
+
+    public RunContext(RunStore.Run run, Recorder recorder, Clock clock, Duration poll, Duration settle, AtomicBoolean stop,
+            OrderApi orders, InventoryApi inventory, AdapterApi adapter, FixtureService fixtures) {
+        this.settle = settle;
         this.run = run;
         this.recorder = recorder;
         this.clock = clock;
@@ -58,6 +63,11 @@ public final class RunContext {
         this.inventory = inventory;
         this.adapter = adapter;
         this.fixtures = fixtures;
+    }
+
+    /** How long to watch after a first shipment for a duplicate. */
+    public Duration settle() {
+        return settle;
     }
 
     public String runId() {
@@ -85,14 +95,55 @@ public final class RunContext {
         recorder.impact(run.runId(), field, value);
     }
 
-    /** Show the operator's console step and wait for its observable effect. */
+    /** Show the operator's console step; the run then waits for its observable effect. */
     public void awaitOperator(String step) {
-        recorder.progress(run.runId(), RunState.AWAITING_OPERATOR, step);
+        recorder.progress(run.runId(), RunState.AWAITING_OPERATOR, step, null);
         recorder.note(run.runId(), "OPERATOR_STEP", "WAITING", step);
     }
 
+    /**
+     * Show a console step whose effect the controller cannot observe, and wait (until the TTL) for the operator to
+     * confirm it through {@code POST /internal/v1/runs/{scenarioRunId}/confirm} with this step ID. The confirmation is
+     * audited with the operator's identity; it is an attestation, recorded as such.
+     */
+    public boolean awaitConfirmation(String stepId, String step) throws InterruptedException {
+        String text = step + " Then confirm step \"" + stepId + "\" (scripts/scenario.sh confirm " + run.runId() + " " + stepId + ").";
+        recorder.progress(run.runId(), RunState.AWAITING_OPERATOR, text, stepId);
+        recorder.note(run.runId(), "OPERATOR_STEP", "WAITING", text);
+        boolean done = await("confirmation of " + stepId,
+                () -> recorder.confirmed(run.runId(), stepId) ? Optional.of(true) : Optional.<Boolean>empty()).isPresent();
+        resume();
+        return done;
+    }
+
     public void resume() {
-        recorder.progress(run.runId(), RunState.RUNNING, null);
+        recorder.progress(run.runId(), RunState.RUNNING, null, null);
+    }
+
+    /**
+     * A one-shot read with up to three attempts, one second apart; transient upstream failures should not fail a
+     * run that has already reached its outcome.
+     */
+    public <T> T read(Supplier<T> call) throws InterruptedException {
+        for (int attempt = 1;; attempt++) {
+            checkStop();
+            try {
+                return call.get();
+            } catch (UpstreamException error) {
+                refusedFast(error);
+                if (attempt >= 3) {
+                    throw error;
+                }
+                Thread.sleep(1000);
+            }
+        }
+    }
+
+    /** A service that refuses the controller's call will keep refusing; fail now rather than at the TTL. */
+    private static void refusedFast(UpstreamException error) {
+        if (error.status() == 401 || error.status() == 403) {
+            throw new Failure(error.getMessage() + "; the controller is not allowed to call it");
+        }
     }
 
     public void checkStop() {
@@ -125,6 +176,7 @@ public final class RunContext {
                     return value;
                 }
             } catch (UpstreamException error) {
+                refusedFast(error);
                 if (!error.getMessage().equals(lastError)) {
                     LOG.warnv("Waiting for {0}: {1}", what, error.getMessage());
                     lastError = error.getMessage();

@@ -97,8 +97,7 @@ public class ScenarioResource {
     }
 
     private String actor() {
-        String subject = token.getName();
-        return subject == null ? token.getSubject() : subject;
+        return Actors.of(token);
     }
 
     /** Names outside the catalog's pattern are refused before anything else, without echoing them. */

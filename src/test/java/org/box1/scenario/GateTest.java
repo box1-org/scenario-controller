@@ -22,7 +22,7 @@ class GateTest {
     public static class OtherNamespace implements QuarkusTestProfile {
         @Override
         public Map<String, String> getConfigOverrides() {
-            return Map.of("scenario.namespace", "payments-prod");
+            return Map.of("scenario.test-namespace", "payments-prod");
         }
     }
 

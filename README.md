@@ -25,8 +25,9 @@ Kafka was selected at scaffold time but is not used: the controller produces and
 The catalog is `src/main/resources/catalog/scenarios.yaml`; each entry gives prerequisites, fixture IDs, durations,
 expected observation, reset action and operator steps. A "not yet possible" entry carries its reason and has no code.
 
-- **Gates:** `SCENARIO_CONTROL_ENABLED=true` and the pod's namespace (`POD_NAMESPACE`) in
-  `SCENARIO_NAMESPACE_ALLOWLIST`. Anything else refuses every action, and the refusal is audited.
+- **Gates:** `SCENARIO_CONTROL_ENABLED=true`, the pod's namespace (`POD_NAMESPACE`, environment only) in
+  `SCENARIO_NAMESPACE_ALLOWLIST`, and every upstream host in `SCENARIO_UPSTREAM_HOST_ALLOWLIST`. Anything else refuses
+  every action, and the refusal is audited.
 - **Access:** bearer tokens from realm `box1`, audience `scenario-controller`, `azp` in `SCENARIO_ALLOWED_AZP`, roles
   `scenario-viewer` (read) and `scenario-operator` (start, stop, reset, seed) from `resource_access.scenario-controller`.
 - **Runs:** one at a time; each has a `scenarioRunId` (`scn_…`), correlation ID `scenario-<scenarioRunId>`, order
@@ -37,7 +38,7 @@ expected observation, reset action and operator steps. A "not yet possible" entr
 
 API: `GET /internal/v1/scenarios`, `POST /internal/v1/scenarios/{name}/start|stop|reset`, `GET /internal/v1/runs`,
 `GET /internal/v1/runs/{scenarioRunId}`, `GET /internal/v1/audit`, `GET /internal/v1/fixtures`,
-`POST /internal/v1/fixtures/seed`. The served OpenAPI at `/q/openapi` is the contract. CLI: `scripts/scenario.sh`.
+`POST /internal/v1/fixtures/seed`, `POST /internal/v1/runs/{scenarioRunId}/confirm`. The served OpenAPI at `/q/openapi` is the contract. CLI: `scripts/scenario.sh`.
 
 See [docs/architecture.md](docs/architecture.md) and [docs/runbook.md](docs/runbook.md).
 
@@ -92,14 +93,15 @@ OpenShift pulls by digest through the internal registry service.
 After onboarding, the GitOps repository is the authoritative deployment source.
 Change the Route, probes, resources, or
 `GREETING_PREFIX` there. The default smoke contract expects `Hello from box1`.
-The ConfigMap also sets JVM container memory limits; runtime has no API token.
+The ConfigMap also sets JVM container memory limits. The pod has no Kubernetes API token; its only credential besides
+the database is the inventory admin client secret, from Secret `scenario-controller-inventory-token`.
 
 Endpoints: `/api/greetings`, `/api/info`, `/q/health/live`, `/q/health/ready`,
 `/q/health/started`, `/q/openapi`, `/q/metrics`.
 
 The development promotion policy is automated after checks. Other environments
-need explicit platform configuration and approval. Static analysis is included;
-no external dependency CVE database scan is implied.
+need explicit platform configuration and approval. Static analysis is included, and the release runs
+`box1-security-gates` in `gate` mode (SBOM and RHACS policy check).
 
 ## API documentation and endpoint testing
 

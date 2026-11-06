@@ -44,6 +44,7 @@ public final class FakeServices {
     volatile long delayMillis;
     volatile boolean erpReachable = true;
     volatile boolean decide = true;
+    volatile boolean duplicateShipment;
 
     static final class Order {
         String orderId;
@@ -54,6 +55,8 @@ public final class FakeServices {
         String state = "SUBMITTED";
         String statusReason = "ORDER_PLACED";
         final List<String> transitions = new ArrayList<>(List.of("SUBMITTED"));
+        /** Timeline entries: kind|toState|eventType. */
+        final List<String[]> timeline = new ArrayList<>(List.<String[]>of(new String[] {"TRANSITION", "SUBMITTED", "order.placed.v1", "evt_0"}));
     }
 
     static final class Ful {
@@ -64,6 +67,9 @@ public final class FakeServices {
         String shipmentId;
         long createdMillis = System.currentTimeMillis();
         boolean held;
+        boolean rejected;
+        String acknowledgedAt;
+        String statusAt;
     }
 
     FakeServices() throws IOException {
@@ -103,6 +109,11 @@ public final class FakeServices {
         delayMillis = 0;
         erpReachable = true;
         decide = true;
+        duplicateShipment = false;
+    }
+
+    synchronized void reject(String ful) {
+        fulfillments.get(ful).rejected = true;
     }
 
     synchronized void hold(String ful) {
@@ -146,8 +157,15 @@ public final class FakeServices {
             if ("NONE".equals(f.ack)) {
                 f.ack = "ACKNOWLEDGED";
                 f.outcome = "PENDING";
+                f.acknowledgedAt = java.time.Instant.now().toString();
+                f.statusAt = f.acknowledgedAt;
             }
-            if ("SHIPPED".equals(f.outcome)) {
+            if ("SHIPPED".equals(f.outcome) || "REJECTED".equals(f.outcome)) {
+                continue;
+            }
+            if (f.rejected) {
+                f.outcome = "REJECTED";
+                f.statusAt = java.time.Instant.now().toString();
                 continue;
             }
             f.outcome = f.held ? "HELD" : "PENDING";
@@ -158,8 +176,13 @@ public final class FakeServices {
                 s[1] -= o.quantity;
                 f.outcome = "SHIPPED";
                 f.shipmentId = "shp_" + f.id.substring(4);
-                move(o, "SHIPPED", "SHIPMENT_CONFIRMED");
-                move(o, "COMPLETED", "SHIPMENT_CONFIRMED");
+                f.statusAt = java.time.Instant.now().toString();
+                String shipmentEvent = UUID.randomUUID().toString();
+                move(o, "SHIPPED", "SHIPMENT_CONFIRMED", "shipment.confirmed.v1", shipmentEvent);
+                move(o, "COMPLETED", "SHIPMENT_CONFIRMED", "shipment.confirmed.v1", shipmentEvent);
+                if (duplicateShipment) {
+                    o.timeline.add(new String[] {"NOTE", null, "shipment.confirmed.v1", UUID.randomUUID().toString()});
+                }
             }
         }
     }
@@ -185,9 +208,19 @@ public final class FakeServices {
     }
 
     private static void move(Order o, String state, String reason) {
+        move(o, state, reason, state.equals("REJECTED") || state.equals("RESERVED") ? "inventory." + (state.equals("REJECTED")
+                ? "rejected" : "reserved") + ".v1" : "order.state-changed.v1");
+    }
+
+    private static void move(Order o, String state, String reason, String eventType) {
+        move(o, state, reason, eventType, UUID.randomUUID().toString());
+    }
+
+    private static void move(Order o, String state, String reason, String eventType, String eventId) {
         o.state = state;
         o.statusReason = reason;
         o.transitions.add(state);
+        o.timeline.add(new String[] {"TRANSITION", state, eventType, eventId});
     }
 
     private void handle(HttpExchange x) throws IOException {
@@ -215,7 +248,13 @@ public final class FakeServices {
         } else if ("GET".equals(method) && path.matches("/api/v1/orders/ord_[A-Za-z0-9_-]+/timeline")) {
             Order o = orders.get(p[4]);
             List<Map<String, Object>> entries = new ArrayList<>();
-            o.transitions.forEach(t -> entries.add(Map.of("kind", "TRANSITION", "toState", t)));
+            for (String[] e : o.timeline) {
+                Map<String, Object> entry = new HashMap<>(Map.of("kind", e[0], "eventType", e[2], "eventId", e[3]));
+                if (e[1] != null) {
+                    entry.put("toState", e[1]);
+                }
+                entries.add(entry);
+            }
             send(x, 200, entries);
         } else if ("GET".equals(method) && path.equals("/api/v1/inventory")) {
             Map<String, String> q = query(x.getRequestURI().getRawQuery());
@@ -271,6 +310,10 @@ public final class FakeServices {
                         "dispatch", "UPLOADED", "erpAcknowledgement", f.ack, "outcome", f.outcome));
                 if (f.shipmentId != null) {
                     v.put("shipmentId", f.shipmentId);
+                }
+                if (f.acknowledgedAt != null) {
+                    v.put("acknowledgedAt", f.acknowledgedAt);
+                    v.put("statusAt", f.statusAt);
                 }
                 send(x, 200, v);
             }

@@ -78,6 +78,32 @@ class AbandonedRunTest {
     }
 
     @Test
+    void aResetThatADeadProcessNeverRecordedIsCompleted() throws Exception {
+        String runId = "scn_00000000000000000003";
+        openRun(runId, Instant.now().minusSeconds(60), Instant.now().plusSeconds(60));
+        try (Connection c = dataSource.getConnection(); var s = c.createStatement()) {
+            s.executeUpdate("UPDATE scenario_run SET status = 'VERIFIED', ended_at = now() WHERE run_id = '" + runId + "'");
+        }
+        engine.recover();
+        RunStore.Run run = store.find(runId).orElseThrow();
+        assertEquals(RunState.VERIFIED, run.status());
+        assertEquals("RESET_OK", run.resetResult());
+    }
+
+    @Test
+    void retentionRemovesOnlyRowsOlderThanNinetyDays() throws Exception {
+        try (Connection c = dataSource.getConnection(); var s = c.createStatement()) {
+            s.execute("INSERT INTO scenario_audit (action, outcome, actor, environment, namespace, occurred_at)"
+                    + " VALUES ('AGED', 'OK', 'a', 'test', 'n', now() - interval '100 days')");
+            s.execute("INSERT INTO scenario_audit (action, outcome, actor, environment, namespace, occurred_at)"
+                    + " VALUES ('RECENT', 'OK', 'a', 'test', 'n', now() - interval '80 days')");
+        }
+        assertTrue(store.purge() >= 1);
+        assertEquals(0, store.auditPage(null, 200).stream().filter(a -> a.action().equals("AGED")).count());
+        assertEquals(1, store.auditPage(null, 200).stream().filter(a -> a.action().equals("RECENT")).count());
+    }
+
+    @Test
     void theAuditTrailIsAppendOnly() throws Exception {
         try (Connection c = dataSource.getConnection(); var s = c.createStatement()) {
             s.execute("INSERT INTO scenario_audit (action, outcome, actor, environment, namespace, occurred_at)"

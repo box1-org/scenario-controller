@@ -54,7 +54,7 @@ public class InventoryApi {
         headers.put("Idempotency-Key", key);
         Http.Reply reply = http.send("POST", base, "/internal/v1/stock/" + Http.segment(siteId) + "/" + Http.segment(sku) + "/restock",
                 Map.of("quantity", quantity, "reason", reason), headers, correlationId);
-        if (reply.status() != 200) {
+        if (reply.status() != 200 || reply.body() == null) {
             throw new UpstreamException("Inventory answered " + reply.status() + " to a restock", reply.status());
         }
         var row = reply.body();

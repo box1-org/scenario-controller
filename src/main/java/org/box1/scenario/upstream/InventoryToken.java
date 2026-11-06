@@ -47,6 +47,11 @@ public class InventoryToken {
         if (cached != null && clock.instant().isBefore(expires)) {
             return cached;
         }
+        java.net.URI uri = java.net.URI.create(settings.url());
+        boolean local = "localhost".equals(uri.getHost()) || "127.0.0.1".equals(uri.getHost());
+        if (!"https".equals(uri.getScheme()) && !local) {
+            throw new UpstreamException("Token URL must use https", 0);
+        }
         String form = "grant_type=client_credentials&client_id=" + URLEncoder.encode(settings.clientId(), StandardCharsets.UTF_8)
                 + "&client_secret=" + URLEncoder.encode(settings.clientSecret(), StandardCharsets.UTF_8);
         int slash = settings.url().indexOf('/', settings.url().indexOf("//") + 2);
