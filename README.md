@@ -1,15 +1,45 @@
 # scenario-controller
 
-A little whimsy for demos
+Box1's safe demo orchestration API ([box1-docs#19](https://github.com/box1-org/box1-docs/issues/19)): a declarative
+catalog of named, bounded and audited demo scenarios, and the canonical demo fixture set, **Starfleet Feline Supply**.
+It is not a command runner: there is no exec, no shell, no Kubernetes write and no caller-supplied URL.
 
-Owner: `user:default/mike4263`. Quarkus 3.40.1.1, Java 21, Maven 3.9.16.
+Owner: `user:default/mike4263`. Quarkus 3.40.1.1, Java 21, Maven 3.9.16. PostgreSQL holds runs and the audit trail.
+Kafka was selected at scaffold time but is not used: the controller produces and consumes no events.
 
-Optional integrations selected at creation: PostgreSQL = `true`, Kafka = `true`.
-The integrations add their Quarkus extensions and GitOps resources. PostgreSQL creates a
-service-owned Deployment, Service, PVC, and Secret placeholder; replace its password before
-syncing. Kafka uses the separately managed shared `box1-kafka` Strimzi cluster; service
-onboarding does not create a `KafkaTopic`. The broker address is
-`box1-kafka-kafka-bootstrap.box1-kafka.svc:9092`.
+## What it does
+
+| Scenario | Title | Mechanism | Status |
+|---|---|---|---|
+| `baseline-order` | Make it so | Service API; ERP shipping is a guided console step | Available |
+| `inventory-contention` | The Trouble with Tribbles | Service API: two simultaneous orders for the last unit | Available |
+| `erp-manual-hold` | Hold that order, Number One | Guided ERP console step, verified through the fulfillment adapter | Available |
+| `erp-delayed-processing` | Impulse power only | Guided ERP console step (needs ERP demo faults) | Available |
+| `erp-crash-after-commit` | Warp core breach (one-shot, contained) | Guided ERP console step (needs ERP demo faults) | Available |
+| `erp-unavailable` | The ERP has cloaked | VM-level | Not yet possible |
+| `broker-outage` | Subspace interference | Platform-level | Not yet possible |
+| `poison-event` | Q was here | Platform-level | Not yet possible |
+| `bad-artifact-gate` | Unsigned shuttlecraft denied docking | Platform-level | Not yet possible |
+| `red-alert` | Red alert | Asset service control API | Not yet possible |
+
+The catalog is `src/main/resources/catalog/scenarios.yaml`; each entry gives prerequisites, fixture IDs, durations,
+expected observation, reset action and operator steps. A "not yet possible" entry carries its reason and has no code.
+
+- **Gates:** `SCENARIO_CONTROL_ENABLED=true` and the pod's namespace (`POD_NAMESPACE`) in
+  `SCENARIO_NAMESPACE_ALLOWLIST`. Anything else refuses every action, and the refusal is audited.
+- **Access:** bearer tokens from realm `box1`, audience `scenario-controller`, `azp` in `SCENARIO_ALLOWED_AZP`, roles
+  `scenario-viewer` (read) and `scenario-operator` (start, stop, reset, seed) from `resource_access.scenario-controller`.
+- **Runs:** one at a time; each has a `scenarioRunId` (`scn_…`), correlation ID `scenario-<scenarioRunId>`, order
+  idempotency keys `stardock-<scenarioRunId>-<n>`, a TTL, and a reset when it ends. A guided step not observed before
+  the TTL ends the run `NOT_VERIFIED`, never as success.
+- **Fixtures:** seeded only through inventory's create-once routes, idempotently; reset only adds stock back up to the
+  opening quantity. Nothing outside the fixture set is changed, and nothing is deleted.
+
+API: `GET /internal/v1/scenarios`, `POST /internal/v1/scenarios/{name}/start|stop|reset`, `GET /internal/v1/runs`,
+`GET /internal/v1/runs/{scenarioRunId}`, `GET /internal/v1/audit`, `GET /internal/v1/fixtures`,
+`POST /internal/v1/fixtures/seed`. The served OpenAPI at `/q/openapi` is the contract. CLI: `scripts/scenario.sh`.
+
+See [docs/architecture.md](docs/architecture.md) and [docs/runbook.md](docs/runbook.md).
 
 ## Local development
 
@@ -18,6 +48,9 @@ Install JDK 21 and use the included Maven wrapper:
 ```sh
 ./mvnw quarkus:dev
 ./mvnw verify -DskipITs=false -Dgit.ref="$(git rev-parse HEAD)"
+# Container-backed tests (PostgreSQL in a container, fake upstream services):
+DOCKER_HOST=unix://$(podman machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}') \
+  TESTCONTAINERS_RYUK_DISABLED=true ./mvnw -Pcontainers verify
 curl http://localhost:8080/api/greetings?name=Ada
 curl http://localhost:8080/api/info
 ```

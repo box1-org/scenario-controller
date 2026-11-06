@@ -1,6 +1,8 @@
 site_name: scenario-controller
-site_description: "A little whimsy for demos"
+site_description: "Safe demo orchestration and the Starfleet Feline Supply fixture set"
 nav:
   - Home: index.md
+  - Architecture: architecture.md
+  - Runbook: runbook.md
 plugins:
   - techdocs-core
