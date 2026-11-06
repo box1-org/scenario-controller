@@ -106,6 +106,16 @@ public final class RunContext {
      * failures while polling are tolerated and the last one is logged; they never count as an observation.
      */
     public <T> Optional<T> await(String what, Supplier<Optional<T>> probe) throws InterruptedException {
+        return await(what, run.expiresAt(), probe);
+    }
+
+    /** As {@link #await(String, Supplier)}, but ending at the earlier of the TTL and {@code limit} from now. */
+    public <T> Optional<T> await(String what, Duration limit, Supplier<Optional<T>> probe) throws InterruptedException {
+        Instant cap = clock.instant().plus(limit);
+        return await(what, cap.isBefore(run.expiresAt()) ? cap : run.expiresAt(), probe);
+    }
+
+    private <T> Optional<T> await(String what, Instant deadline, Supplier<Optional<T>> probe) throws InterruptedException {
         String lastError = null;
         while (true) {
             checkStop();
@@ -120,7 +130,7 @@ public final class RunContext {
                     lastError = error.getMessage();
                 }
             }
-            if (!clock.instant().plus(poll).isBefore(run.expiresAt())) {
+            if (!clock.instant().plus(poll).isBefore(deadline)) {
                 return Optional.empty();
             }
             Thread.sleep(poll.toMillis());

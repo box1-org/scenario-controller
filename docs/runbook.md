@@ -27,7 +27,7 @@ scripts/scenario.sh watch scn_...
 
 Guided ERP scenarios print the console step in `operatorStep`. Perform it in the ERP console
 (`virtctl console legacy-erp -n legacy-erp-dev`); the run verifies the effect through the fulfillment adapter.
-On this cluster the adapter cannot reach the ERP yet (SFTP disabled), so these scenarios end `NOT_VERIFIED`.
+The adapter reaches the ERP VM over SFTP (box1-workloads-dev#100). `erp-delayed-processing` and `erp-crash-after-commit` also need the ERP's demo faults enabled (`[demo] faults = true`), which are off in the VM image.
 
 ## Recovery
 

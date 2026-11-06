@@ -90,7 +90,7 @@ scenarios:
     description: The ERP VM is unavailable; requests are accepted and delivered later.
     mechanism: VM_LEVEL
     availability: NOT_YET_POSSIBLE
-    notPossibleReason: Stopping the ERP VM needs Kubernetes RBAC that is not approved, Argo self-heal restores the VM, and the fulfillment adapter cannot reach the ERP on this cluster.
+    notPossibleReason: Stopping the ERP VM needs Kubernetes RBAC that is not approved, and Argo self-heal restores the VM's run strategy.
     fixtures: []
     defaultDurationSeconds: 300
     maxDurationSeconds: 600

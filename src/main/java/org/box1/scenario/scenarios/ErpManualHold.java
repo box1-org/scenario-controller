@@ -1,6 +1,8 @@
 package org.box1.scenario.scenarios;
 
+import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import org.box1.scenario.run.RunContext;
@@ -12,6 +14,7 @@ import org.box1.scenario.upstream.UpstreamException;
 public class ErpManualHold implements ScenarioExecutor {
     static final String SITE = "site_utopia_planitia";
     static final String SKU = "CAT-COMBADGE-COLLAR";
+    static final Duration SIGNAL_WAIT = Duration.ofSeconds(45);
 
     @Override
     public String name() {
@@ -38,9 +41,11 @@ public class ErpManualHold implements ScenarioExecutor {
             return Result.notVerified("Operator step not observed before the TTL: " + ful + " was never HELD");
         }
         String whileHeld = Steps.last(c, orderId);
-        double gauge = heldGauge(c);
-        c.impact("heldSignal", "fulfillment_held=" + gauge);
-        c.note("HELD_OBSERVED", ful + " HELD; order " + whileHeld + "; fulfillment_held=" + gauge);
+        // The adapter refreshes its gauges periodically (15 s by default), so wait for the signal before releasing.
+        String signal = c.await("fulfillment_held signal", SIGNAL_WAIT, () -> heldGauge(c) >= 1 ? Optional.of("fulfillment_held >= 1")
+                : Optional.empty()).orElse("fulfillment_held not observed within " + SIGNAL_WAIT.toSeconds() + " s");
+        c.impact("heldSignal", signal);
+        c.note("HELD_OBSERVED", ful + " HELD; order " + whileHeld + "; " + signal);
         c.awaitOperator("In the ERP console, release " + ful + " (\"l\").");
         var released = c.await("release of " + ful, () -> c.adapter.fulfillment(ful, c.correlationId())
                 .filter(f -> !"HELD".equals(f.outcome())));
@@ -54,7 +59,7 @@ public class ErpManualHold implements ScenarioExecutor {
             return Result.failed("Order " + orderId + " was " + whileHeld + " while held and " + after + " after release");
         }
         return Result.verified("Held and released " + ful + "; order " + orderId + " stayed FULFILLMENT_REQUESTED while held,"
-                + " now " + after + "; adapter outcome " + released.get().outcome() + "; fulfillment_held was " + gauge);
+                + " now " + after + "; adapter outcome " + released.get().outcome() + "; held signal: " + signal);
     }
 
     private static double heldGauge(RunContext c) {

@@ -134,7 +134,7 @@ class ScenarioRunsTest {
         JsonPath run = ended(runId);
         assertEquals("VERIFIED", run.getString("status"), run.prettify());
         assertTrue(run.getString("detail").contains("stayed FULFILLMENT_REQUESTED while held"));
-        assertTrue(run.getString("detail").contains("fulfillment_held was 1.0"));
+        assertTrue(run.getString("detail").contains("held signal: fulfillment_held >= 1"), run.getString("detail"));
         assertEquals("RESET_OK", run.getString("resetResult"));
         complete(run);
     }
