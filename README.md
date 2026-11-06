@@ -30,6 +30,8 @@ expected observation, reset action and operator steps. A "not yet possible" entr
   every action, and the refusal is audited.
 - **Access:** bearer tokens from realm `box1`, audience `scenario-controller`, `azp` in `SCENARIO_ALLOWED_AZP`, roles
   `scenario-viewer` (read) and `scenario-operator` (start, stop, reset, seed) from `resource_access.scenario-controller`.
+  Two clients are allowed: `scenario-controller-cli` (the CLI) and `operations-console` (its Demo control page, which
+  forwards the signed-in person's token).
 - **Runs:** one at a time; each has a `scenarioRunId` (`scn_…`), correlation ID `scenario-<scenarioRunId>`, order
   idempotency keys `stardock-<scenarioRunId>-<n>`, a TTL, and a reset when it ends. A guided step not observed before
   the TTL ends the run `NOT_VERIFIED`, never as success.
