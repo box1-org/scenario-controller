@@ -11,7 +11,7 @@
 | `ORDER_SERVICE_URL`, `INVENTORY_SERVICE_URL`, `FULFILLMENT_ADAPTER_URL` | Fixed upstream base URLs | cluster DNS, port 8080 |
 | `INVENTORY_TOKEN_URL`, `INVENTORY_TOKEN_CLIENT_ID`, `INVENTORY_TOKEN_CLIENT_SECRET` | Client credentials for inventory admin calls; the secret comes from a Secret reference | unset until approved |
 | `SCENARIO_UPSTREAM_HOST_ALLOWLIST` | Gate 3: hosts the upstream and token URLs may point at | the three dev services and `keycloak.apps.ocp.box1.org` |
-| `SCENARIO_ALLOWED_AZP` | Clients whose tokens may carry roles | `scenario-controller-cli` |
+| `SCENARIO_ALLOWED_AZP` | Clients whose tokens may carry roles | `scenario-controller-cli,operations-console` |
 | `SCENARIO_POLL_INTERVAL`, `SCENARIO_UPSTREAM_TIMEOUT`, `SCENARIO_EXPIRY_INTERVAL` | Polling, per-call timeout, expiry sweep | `PT2S`, `PT5S`, `5s` |
 | `SCENARIO_MINIMUM_VISIBLE_DELAY`, `SCENARIO_SHIPMENT_SETTLE` | Delay that counts as visible; watch window for a duplicate shipment | `PT60S`, `PT10S` |
 | `QUARKUS_DATASOURCE_*` | Audit store | template Secret |
@@ -20,6 +20,14 @@ Without the inventory identity the controller starts, its gates and audit work, 
 "Inventory admin identity is not configured" (`RESET_FAILED`).
 
 ## Demonstrating
+
+The operations console's **Demo control** page (`/demo`) does all of this with buttons: seed, start (after a
+confirmation), stop, reset, the active run's step, step confirmations, recent runs and the audit. It calls the
+controller with the signed-in person's token, so the person needs `scenario-operator` here (and `console-operator`
+in the console); the audit names them. The CLI below does the same from a terminal.
+
+The CLI client requires PKCE on the device login: send `code_challenge` (S256) with the device authorization request
+and `code_verifier` with the token request.
 
 ```sh
 export TOKEN=...            # from client scenario-controller-cli, role scenario-operator; never commit or print it
