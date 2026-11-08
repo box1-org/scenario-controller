@@ -4,7 +4,7 @@ Box1's safe demo orchestration API ([box1-docs#19](https://github.com/box1-org/b
 catalog of named, bounded and audited demo scenarios, and the canonical demo fixture set, **Starfleet Feline Supply**.
 It is not a command runner: there is no exec, no shell, no Kubernetes write and no caller-supplied URL.
 
-Owner: `user:default/mike4263`. Quarkus 3.40.1.1, Java 21, Maven 3.9.16. PostgreSQL holds runs and the audit trail.
+Owner: `user:default/mike`. Quarkus 3.40.1.1, Java 21, Maven 3.9.16. PostgreSQL holds runs and the audit trail.
 Kafka was selected at scaffold time but is not used: the controller produces and consumes no events.
 
 ## What it does

@@ -35,11 +35,20 @@ metadata:
 spec:
   type: service
   lifecycle: experimental
-  owner: "user:default/mike4263"
-  # Add when the corresponding System entity exists:
-  # system: box1-demo
+  owner: "user:default/mike"
+  system: box1-operations
   providesApis:
     - scenario-controller-api
+  consumesApis:
+    - order-service-api
+    - inventory-service-api
+    - fulfillment-adapter-api
+  dependsOn:
+    - component:order-service
+    - component:inventory-service
+    - component:fulfillment-adapter
+    - resource:scenario-controller-postgres
+    - resource:keycloak-box1
 ---
 apiVersion: backstage.io/v1alpha1
 kind: API
@@ -50,6 +59,22 @@ metadata:
 spec:
   type: openapi
   lifecycle: experimental
-  owner: "user:default/mike4263"
+  owner: "user:default/mike"
+  system: box1-operations
   definition:
     $text: https://scenario-controller-dev.apps.ocp.box1.org/q/openapi
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: scenario-controller-postgres
+  description: PostgreSQL database scenario_controller owned by scenario-controller (scenario-controller-dev namespace)
+  tags: [postgresql, database]
+  links:
+    - url: https://github.com/box1-org/box1-workloads-dev/blob/main/workloads/scenario-controller/postgres.yaml
+      title: Database manifest
+spec:
+  type: database
+  lifecycle: experimental
+  owner: "user:default/mike"
+  system: box1-operations
